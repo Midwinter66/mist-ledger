@@ -6,7 +6,7 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "deploy:pages": "npm run build && wrangler pages deploy dist --project-name mist-ledger"
+    "deploy:pages": "npm run build && npx wrangler pages deploy dist --project-name mist-ledger"
   },
   "dependencies": {
     "@astrojs/react": "latest",
