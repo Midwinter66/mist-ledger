@@ -18,6 +18,7 @@ const initialTransactions: Transaction[] = [
 
 const money = (value: number) => `¥ ${value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const dateLabel = (date: string) => date === '2026-09-03' ? '今天' : date === '2026-09-02' ? '昨天' : date.slice(5).replace('-', '月') + '日';
+const localParts = () => { const now = new Date(); return { date: now.toISOString().slice(0, 10), time: now.toTimeString().slice(0, 5) }; };
 const fromDbRow = (row: { id: number; type: Mode; amount: number | string; category?: string | null; note?: string | null; occurred_at: string }): Transaction => { const date = row.occurred_at.slice(0, 10); return { id: row.id, type: row.type, amount: Number(row.amount), category: row.category ?? undefined, note: row.note ?? (row.type === 'income' ? '收入' : row.category ?? '支出'), date, time: row.occurred_at.slice(11, 16) }; };
 
 function Donut({ rows, onHover }: { rows: Array<{ name: string; value: number; color: string }>; onHover: (name: string | null) => void }) {
@@ -33,6 +34,8 @@ export default function AccountingApp() {
   const [mode, setMode] = useState<Mode | null>(null);
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState('餐饮');
+  const [entryDate, setEntryDate] = useState('2026-09-03');
+  const [entryTime, setEntryTime] = useState('12:00');
   const [transactions, setTransactions] = useState(initialTransactions);
   const [hoveredCategory, setHoveredCategory] = useState<string | null>(null);
   const [selectedMonth, setSelectedMonth] = useState('2026-09');
@@ -49,9 +52,9 @@ export default function AccountingApp() {
   const income = currentMonth.filter((item) => item.type === 'income').reduce((sum, item) => sum + item.amount, 0);
   const expense = currentMonth.filter((item) => item.type === 'expense').reduce((sum, item) => sum + item.amount, 0);
   const categoryRows = useMemo(() => categories.map(([name], index) => ({ name, value: currentMonth.filter((item) => item.category === name).reduce((sum, item) => sum + item.amount, 0), color: categoryColors[index] })).filter((row) => row.value > 0).sort((a, b) => b.value - a.value), [currentMonth]);
-  const openEntry = (next: Mode) => { setMode(next); setAmount(''); setCategory('餐饮'); };
+  const openEntry = (next: Mode) => { const parts = localParts(); setMode(next); setAmount(''); setCategory('餐饮'); setEntryDate(parts.date); setEntryTime(parts.time); };
   const append = (value: string) => setAmount((current) => value === '.' && current.includes('.') ? current : current === '0' ? value : current + value);
-  const saveEntry = async () => { const numeric = Number(amount); if (!numeric || numeric <= 0 || !mode) return; const now = new Date(); const draft = { type: mode, amount: numeric, category: mode === 'expense' ? category : null, note: mode === 'expense' ? category : '收入', occurred_at: now.toISOString() }; if (supabase && session) { const { data, error } = await supabase.from('transactions').insert({ ...draft, user_id: session.user.id }).select('id,type,amount,category,note,occurred_at').single(); if (error) { setDbMessage(error.message); return; } setTransactions((items) => [fromDbRow(data), ...items]); } else { setTransactions((items) => [{ id: Date.now(), ...draft, date: now.toISOString().slice(0, 10), time: now.toTimeString().slice(0, 5) }, ...items] as Transaction[]); } setMode(null); };
+  const saveEntry = async () => { const numeric = Number(amount); if (!numeric || numeric <= 0 || !mode || !entryDate || !entryTime) return; const occurred = new Date(`${entryDate}T${entryTime}:00`); const draft = { type: mode, amount: numeric, category: mode === 'expense' ? category : null, note: mode === 'expense' ? category : '收入', occurred_at: occurred.toISOString() }; if (supabase && session) { const { data, error } = await supabase.from('transactions').insert({ ...draft, user_id: session.user.id }).select('id,type,amount,category,note,occurred_at').single(); if (error) { setDbMessage(error.message); return; } setTransactions((items) => [fromDbRow(data), ...items]); } else { setTransactions((items) => [{ id: Date.now(), ...draft, date: entryDate, time: entryTime }, ...items] as Transaction[]); } setMode(null); };
   const navigate = (next: View) => { setView(next); setMenuOpen(false); };
   const submitAuth = async (event: FormEvent) => { event.preventDefault(); setAuthMessage(''); if (!supabase) { setAuthMessage('尚未配置 Supabase'); return; } const result = authMode === 'sign-in' ? await supabase.auth.signInWithPassword({ email: authEmail, password: authPassword }) : await supabase.auth.signUp({ email: authEmail, password: authPassword }); if (result.error) setAuthMessage(result.error.message); else setAuthMessage(authMode === 'sign-up' ? '注册成功，请检查邮箱后登录。' : ''); };
 
@@ -64,6 +67,7 @@ export default function AccountingApp() {
     {view === 'categories' && <CategoryView transactions={transactions} selectedMonth={selectedMonth} onSelectMonth={setSelectedMonth} onBack={() => navigate('home')} />}
     {view === 'recent' && <RecentView transactions={transactions} onBack={() => navigate('home')} />}
     {mode && <div className="modal-backdrop" onClick={() => setMode(null)}><section className="entry-modal" onClick={(e) => e.stopPropagation()}><div className="modal-head"><div><span className={`modal-kicker ${mode}`}>{mode === 'income' ? 'INCOME' : 'EXPENSE'}</span><h2>{mode === 'income' ? '记录一笔收入' : '记录一笔支出'}</h2></div><button onClick={() => setMode(null)} aria-label="关闭">×</button></div><div className="amount-input"><span>¥</span><input autoFocus inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ''))} placeholder="0.00" aria-label="金额" /></div>{mode === 'expense' && <div className="modal-categories">{categories.map(([name, icon]) => <button className={category === name ? 'selected' : ''} onClick={() => setCategory(name)} key={name}><span>{icon}</span>{name}</button>)}</div>}<div className="keypad">{['1','2','3','4','5','6','7','8','9','.','0','⌫'].map((key) => <button onClick={() => key === '⌫' ? setAmount(amount.slice(0, -1)) : append(key)} key={key}>{key}</button>)}</div><button className="save-button" onClick={saveEntry}>{mode === 'income' ? '保存收入' : `保存支出 · ${category}`}</button></section></div>}
+    {mode && <div className="date-picker-dock"><label>记账日期<input type="date" value={entryDate} onChange={(e) => setEntryDate(e.target.value)} /></label><label>时间<input type="time" value={entryTime} onChange={(e) => setEntryTime(e.target.value)} /></label></div>}
   </main>;
 }
 
